@@ -115,8 +115,8 @@ def convert_grayscale_to_binary(
             row_byte2 = 0
 
             for value in row:
-                row_byte1 = (row_byte1 << 1) | (1 if value & 1 else 0)
-                row_byte2 = (row_byte2 << 1) | (1 if value & 2 else 0)
+                row_byte1 = (row_byte1 << 1) | (value & 1)
+                row_byte2 = (row_byte2 << 1) | ((value & 2) >> 1)
 
             tile_bytes.append(row_byte1)
             tile_bytes.append(row_byte2)
