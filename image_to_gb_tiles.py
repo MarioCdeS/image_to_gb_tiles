@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Generator, List, Optional, Tuple, TypeVar
+from typing import Generator, List, Tuple, TypeVar
 
 from PIL import Image, UnidentifiedImageError
 
@@ -11,8 +11,10 @@ T = TypeVar("T")
 Palette = Tuple[int, int, int, int]
 Thresholds = Tuple[int, int, int]
 
+MAX_GB_TILES: int = 255
 
-DEFAULT_OUTPUT: str = "output.bin"
+DEFAULT_TILESET_FILE: str = "tile-set.bin"
+DEFAULT_INDICES_FILE: str = "indices.bin"
 DEFAULT_PALETTE: Palette = (0, 1, 2, 3)
 DEFAULT_THRESHOLDS: Thresholds = (63, 127, 191)
 
@@ -23,27 +25,49 @@ class ImageError(Exception):
 
 def main() -> None:
     args = parse_arguments()
-    palette = tuple(args.palette) if args.palette else None
-    thresholds = tuple(args.thresholds) if args.thresholds else None
 
     try:
         image = load_image_as_grayscale(args.image)
-        binary = convert_grayscale_to_binary(image, palette, thresholds)
+        tile_set, indices = convert_grayscale_to_tile_set(
+            image, args.palette, args.thresholds
+        )
     except ImageError as err:
         print(err, file=sys.stderr)
         sys.exit(1)
 
+    print(f"{len(tile_set)} unique tiles found.")
+
+    if len(tile_set) > MAX_GB_TILES:
+        print(
+            "Warning: The total size of this tile-set exceeds the allocated "
+            "VRAM size for tiles.",
+            file=sys.stderr,
+        )
+
     try:
-        write_binary_to_file(args.output, binary)
+        write_tile_set_to_file(args.output, tile_set)
+        write_indices_to_file(args.indices, indices)
     except IOError as err:
-        print(f"Unable to output binary file: {err}", file=sys.stderr)
+        print(f"Failed to generate output binaries: {err}", file=sys.stderr)
+    else:
+        print(f"Tile-set outputted to '{args.output}'.")
+        print(f"Indices outputted to '{args.indices}'.")
 
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("image", help="path of the image file to convert")
     parser.add_argument(
-        "-o", "--output", help="path to output Game Boy binary to"
+        "-o",
+        "--output",
+        default=DEFAULT_TILESET_FILE,
+        help="output path for the tile-set binary",
+    )
+    parser.add_argument(
+        "-i",
+        "--indices",
+        default=DEFAULT_INDICES_FILE,
+        help="output path for the tile-set indices binary",
     )
     parser.add_argument(
         "-p",
@@ -51,6 +75,7 @@ def parse_arguments() -> argparse.Namespace:
         nargs=4,
         type=int,
         metavar="I",
+        default=DEFAULT_PALETTE,
         help="grayscale palette values (0-3)",
     )
     parser.add_argument(
@@ -59,6 +84,7 @@ def parse_arguments() -> argparse.Namespace:
         nargs=3,
         type=int,
         metavar="U8",
+        default=DEFAULT_THRESHOLDS,
         help="grayscale threshold values",
     )
 
@@ -79,15 +105,10 @@ def load_image_as_grayscale(image_path: str) -> Image:
     return image
 
 
-def convert_grayscale_to_binary(
-    image: Image,
-    palette: Optional[Palette] = None,
-    thresholds: Optional[Thresholds] = None,
-) -> bytes:
+def convert_grayscale_to_tile_set(
+    image: Image, palette: Palette, thresholds: Thresholds
+) -> Tuple[List[bytes], List[int]]:
     assert image.mode == "L", "Image argument must contain a grayscale image."
-
-    palette = palette or DEFAULT_PALETTE
-    thresholds = thresholds or DEFAULT_THRESHOLDS
 
     width, height = image.size
 
@@ -105,7 +126,7 @@ def convert_grayscale_to_binary(
         for j in range(height)
     ]
 
-    binary = []
+    tile_set = []
 
     for tile in grid_8x8_segments(palette_values):
         tile_bytes = []
@@ -121,9 +142,9 @@ def convert_grayscale_to_binary(
             tile_bytes.append(row_byte1)
             tile_bytes.append(row_byte2)
 
-        binary.extend(tile_bytes)
+        tile_set.append(bytes(tile_bytes))
 
-    return bytes(binary)
+    return reduce_tile_set(tile_set)
 
 
 def grayscale_to_palette(
@@ -160,11 +181,22 @@ def grid_8x8_segments(
             yield segment
 
 
-def write_binary_to_file(output_path: Optional[str], binary: bytes) -> None:
-    output_path = output_path or DEFAULT_OUTPUT
+def reduce_tile_set(tile_set: List[bytes]) -> Tuple[List[bytes], List[int]]:
+    reduced_set = list(set(tile_set))
+    index_lookup = {tile: i for i, tile in enumerate(reduced_set)}
+    indices = [index_lookup[tile] for tile in tile_set]
+    return reduced_set, indices
 
-    with open(output_path, "wb") as out:
-        out.write(binary)
+
+def write_tile_set_to_file(file_path: str, tile_set: List[bytes]) -> None:
+    with open(file_path, "wb") as out:
+        for tile in tile_set:
+            out.write(tile)
+
+
+def write_indices_to_file(file_path: str, indices: List[int]) -> None:
+    with open(file_path, "wb") as out:
+        out.write(bytes(indices))
 
 
 if __name__ == "__main__":
