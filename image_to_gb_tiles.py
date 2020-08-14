@@ -114,7 +114,7 @@ def convert_grayscale_to_tile_set(
 
     if width % 8 or height % 8:
         raise ImageError(
-            f"The dimensions of '{image.filename}' are not a multiple of 8."
+            "The dimensions of the input image are not a multiple of 8."
         )
 
     pixels = image.load()
